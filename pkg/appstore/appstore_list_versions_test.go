@@ -16,6 +16,7 @@ var _ = Describe("AppStore (ListVersions)", func() {
 		ctrl               *gomock.Controller
 		mockBagClient      *http.MockClient[bagResult]
 		mockDownloadClient *http.MockClient[downloadResult]
+		mockPlatformClient *http.MockClient[platformVersionLookupResult]
 		mockMachine        *machine.MockMachine
 		as                 AppStore
 	)
@@ -24,10 +25,12 @@ var _ = Describe("AppStore (ListVersions)", func() {
 		ctrl = gomock.NewController(GinkgoT())
 		mockBagClient = http.NewMockClient[bagResult](ctrl)
 		mockDownloadClient = http.NewMockClient[downloadResult](ctrl)
+		mockPlatformClient = http.NewMockClient[platformVersionLookupResult](ctrl)
 		mockMachine = machine.NewMockMachine(ctrl)
 		as = &appstore{
 			bagClient:      mockBagClient,
 			downloadClient: mockDownloadClient,
+			platformClient: mockPlatformClient,
 			machine:        mockMachine,
 		}
 	})
@@ -287,6 +290,43 @@ var _ = Describe("AppStore (ListVersions)", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("failed to get latest version from item metadata"))
 		})
+	})
+
+	It("lists the iOS history from a version-pinned fallback", func() {
+		const latest = "890598805"
+		bag := validBagResult()
+		bag.URLBag.RedownloadEndpoint = testRedownloadEndpoint
+		mockMachine.EXPECT().MacAddress().Return("00:11:22:33:44:55", nil)
+		gomock.InOrder(
+			mockDownloadClient.EXPECT().Send(gomock.Any()).
+				Return(http.Result[downloadResult]{StatusCode: gohttp.StatusOK}, nil),
+			mockBagClient.EXPECT().Send(gomock.Any()).
+				Return(http.Result[bagResult]{StatusCode: gohttp.StatusOK, Data: bag}, nil),
+			mockPlatformClient.EXPECT().Send(gomock.Any()).
+				Return(http.Result[platformVersionLookupResult]{StatusCode: gohttp.StatusOK,
+					Data: platformVersionLookupResult{Results: map[string]platformVersionLookupItem{
+						"547702041": {Offers: []platformVersionLookupOffer{
+							{Version: platformVersionLookupVersion{ExternalID: platformVersionExternalID(latest)}},
+						}},
+					}}}, nil),
+			mockDownloadClient.EXPECT().Send(gomock.Any()).
+				Do(func(req http.Request) {
+					Expect(req.Payload.(*http.XMLPayload).Content).To(HaveKeyWithValue("appExtVrsId", latest))
+				}).
+				Return(http.Result[downloadResult]{StatusCode: gohttp.StatusOK,
+					Data: downloadResult{Items: []downloadItemResult{{Metadata: map[string]interface{}{
+						"softwareVersionExternalIdentifiers": []interface{}{"9660833", latest},
+						"softwareVersionExternalIdentifier":  latest,
+					}}}}}, nil),
+		)
+
+		out, err := as.ListVersions(ListVersionsInput{
+			Account: Account{StoreFront: "143441-1,34"},
+			App:     App{ID: 547702041},
+		})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(out.ExternalVersionIdentifiers).To(Equal([]string{"9660833", latest}))
+		Expect(out.LatestExternalVersionID).To(Equal(latest))
 	})
 
 	When("successfully lists versions", func() {

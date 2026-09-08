@@ -1,7 +1,6 @@
 package appstore
 
 import (
-	"errors"
 	"fmt"
 	gohttp "net/http"
 	"net/url"
@@ -20,67 +19,53 @@ type downloadProductEndpoint struct {
 	versionKey string
 }
 
-func (t *appstore) sendDownloadProduct(acc Account, app App, guid, externalVersionID string, platform Platform) (http.Result[downloadResult], error) {
+func (t *appstore) sendDownloadProduct(acc Account, app App, guid, externalVersionID string, platform Platform) (http.Result[downloadResult], Platform, error) {
 	volumeStore := t.volumeStoreEndpoint(acc)
 
 	res, err := t.downloadClient.Send(t.downloadProductRequest(volumeStore, acc, app, guid, externalVersionID))
 	if err != nil {
-		return res, fmt.Errorf("failed to send http request: %w", err)
+		return res, platform, fmt.Errorf("failed to send http request: %w", err)
 	}
 
 	if !isEmptyDownloadProductResponse(res) {
-		return res, nil
+		return res, platform, nil
 	}
 
 	// Some owned apps return HTTP 200 with no items or failure metadata from
 	// volumeStore. In that exact case, redownloadProduct can still serve the app.
 	bag, err := t.bag(guid)
 	if err != nil {
-		return res, fmt.Errorf("failed to get bag for redownload fallback: %w", err)
+		return res, platform, fmt.Errorf("failed to get bag for redownload fallback: %w", err)
 	}
 
 	if bag.RedownloadEndpoint == "" {
-		return res, nil
+		return res, platform, nil
 	}
 
 	redownload, err := newRedownloadEndpoint(bag.RedownloadEndpoint)
 	if err != nil {
-		return res, err
+		return res, platform, err
+	}
+
+	if externalVersionID == "" && (platform == "" || platform == PlatformIPhone || platform == PlatformIPad) {
+		// Unpinned redownloads can return either HTTP 500 (Karing) or a
+		// successful tvOS package (Tinder). Select the iOS build before sending.
+		if platform == "" {
+			platform = PlatformIPhone
+		}
+
+		externalVersionID, err = t.lookupLatestExternalVersionID(acc, app, platform)
+		if err != nil {
+			return res, platform, fmt.Errorf("failed to resolve latest iOS version for redownload: %w", err)
+		}
 	}
 
 	redownloadRes, err := t.downloadClient.Send(t.downloadProductRequest(redownload, acc, app, guid, externalVersionID))
 	if err != nil {
-		var responseErr *http.UnexpectedResponseError
-
-		canResolveLatestVersion := externalVersionID == "" &&
-			(platform == "" || platform == PlatformIPhone || platform == PlatformIPad)
-
-		if canResolveLatestVersion && errors.As(err, &responseErr) &&
-			responseErr.StatusCode == gohttp.StatusInternalServerError && responseErr.Snippet == "" {
-			// The unpinned redownload request can fail even when Apple's catalog
-			// advertises a downloadable iOS build (issue #547). Retry that exact
-			// build once, without replacing an explicitly requested version.
-			if platform == "" {
-				platform = PlatformIPhone
-			}
-
-			versionID, lookupErr := t.lookupLatestExternalVersionID(acc, app, platform)
-			if lookupErr != nil {
-				return redownloadRes, fmt.Errorf("failed to resolve latest version for redownload: %w (original error: %w)", lookupErr, err)
-			}
-
-			pinnedRes, pinnedErr := t.downloadClient.Send(t.downloadProductRequest(redownload, acc, app, guid, versionID))
-			if pinnedErr != nil {
-				return pinnedRes, fmt.Errorf("failed to send version-pinned redownload request: %w", pinnedErr)
-			}
-
-			return pinnedRes, nil
-		}
-
-		return redownloadRes, fmt.Errorf("failed to send redownload request: %w", err)
+		return redownloadRes, platform, fmt.Errorf("failed to send redownload request: %w", err)
 	}
 
-	return redownloadRes, nil
+	return redownloadRes, platform, nil
 }
 
 func isEmptyDownloadProductResponse(res http.Result[downloadResult]) bool {

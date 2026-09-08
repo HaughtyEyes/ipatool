@@ -58,7 +58,7 @@ func (t *appstore) Download(input DownloadInput) (DownloadOutput, error) {
 		}
 	}
 
-	res, err := t.sendDownloadProduct(input.Account, input.App, guid, externalVersionID, input.Platform)
+	res, resolvedPlatform, err := t.sendDownloadProduct(input.Account, input.App, guid, externalVersionID, input.Platform)
 	if err != nil {
 		return DownloadOutput{}, err
 	}
@@ -115,12 +115,16 @@ func (t *appstore) Download(input DownloadInput) (DownloadOutput, error) {
 		return DownloadOutput{}, fmt.Errorf("failed to download file: %w", err)
 	}
 
-	if err := t.applyPatches(item, input.Account, tmpPath, destination); err != nil {
-		return DownloadOutput{}, fmt.Errorf("failed to apply patches: %w", err)
+	if err := t.validatePackagePlatform(tmpPath, resolvedPlatform); err != nil {
+		if removeErr := t.os.Remove(tmpPath); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to remove invalid package: %w", removeErr))
+		}
+
+		return DownloadOutput{}, fmt.Errorf("failed to validate package platform: %w", err)
 	}
 
-	if err := t.validatePackagePlatform(destination, input.Platform); err != nil {
-		return DownloadOutput{}, fmt.Errorf("failed to validate package platform: %w", err)
+	if err := t.applyPatches(item, input.Account, tmpPath, destination); err != nil {
+		return DownloadOutput{}, fmt.Errorf("failed to apply patches: %w", err)
 	}
 
 	if err := t.os.Remove(tmpPath); err != nil {
@@ -141,6 +145,8 @@ func (*appstore) validatePackagePlatform(path string, platform Platform) error {
 	var expectedPlatform string
 
 	switch platform {
+	case PlatformIPhone, PlatformIPad:
+		expectedPlatform = "iPhoneOS"
 	case PlatformAppleTV:
 		expectedPlatform = "AppleTVOS"
 	case PlatformVisionOS:

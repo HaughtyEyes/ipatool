@@ -473,6 +473,41 @@ var _ = Describe("AppStore (GetVersionMetadata)", func() {
 		})
 	})
 
+	It("preserves the requested historical version through the redownload fallback", func() {
+		const versionID = "818970197"
+		releaseDate := time.Date(2016, 12, 15, 12, 0, 0, 0, time.UTC)
+		server, _, _ := testIPAServer(testIPA("1.0", releaseDate.Format(time.RFC3339), releaseDate))
+		defer server.Close()
+
+		bag := validBagResult()
+		bag.URLBag.RedownloadEndpoint = testRedownloadEndpoint
+		mockMachine.EXPECT().MacAddress().Return("00:11:22:33:44:55", nil)
+		gomock.InOrder(
+			mockDownloadClient.EXPECT().Send(gomock.Any()).
+				Do(func(req http.Request) {
+					Expect(req.Payload.(*http.XMLPayload).Content).To(HaveKeyWithValue("externalVersionId", versionID))
+				}).
+				Return(http.Result[downloadResult]{StatusCode: gohttp.StatusOK}, nil),
+			mockBagClient.EXPECT().Send(gomock.Any()).
+				Return(http.Result[bagResult]{StatusCode: gohttp.StatusOK, Data: bag}, nil),
+			mockDownloadClient.EXPECT().Send(gomock.Any()).
+				Do(func(req http.Request) {
+					payload := req.Payload.(*http.XMLPayload).Content
+					Expect(payload).To(HaveKeyWithValue("appExtVrsId", versionID))
+					Expect(payload).ToNot(HaveKey("externalVersionId"))
+				}).
+				Return(http.Result[downloadResult]{StatusCode: gohttp.StatusOK,
+					Data: downloadResult{Items: []downloadItemResult{{URL: server.URL}}}}, nil),
+		)
+
+		output, err := as.GetVersionMetadata(GetVersionMetadataInput{
+			App: App{ID: 547702041}, VersionID: versionID,
+		})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(output.DisplayVersion).To(Equal("1.0"))
+		Expect(output.ReleaseDate).To(Equal(releaseDate))
+	})
+
 	When("successfully gets version metadata", func() {
 		var (
 			server         *httptest.Server
