@@ -292,10 +292,21 @@ var _ = Describe("AppStore (ListVersions)", func() {
 		})
 	})
 
-	It("lists the iOS history from a version-pinned fallback", func() {
+	DescribeTable("lists the iOS history from a version-pinned fallback", func(useWebsite bool) {
 		const latest = "890598805"
 		bag := validBagResult()
 		bag.URLBag.RedownloadEndpoint = testRedownloadEndpoint
+		catalog := platformVersionLookupResult{Results: map[string]platformVersionLookupItem{
+			"547702041": {Offers: []platformVersionLookupOffer{
+				{Version: platformVersionLookupVersion{ExternalID: platformVersionExternalID(latest)}},
+			}},
+		}}
+		if useWebsite {
+			catalog = platformVersionLookupResult{}
+			as.(*appstore).websiteClient = testWebsiteVersionClient(
+				websiteVersionBody("547702041", "com.cardify.tinder", latest), gohttp.StatusOK)
+		}
+
 		mockMachine.EXPECT().MacAddress().Return("00:11:22:33:44:55", nil)
 		gomock.InOrder(
 			mockDownloadClient.EXPECT().Send(gomock.Any()).
@@ -303,12 +314,7 @@ var _ = Describe("AppStore (ListVersions)", func() {
 			mockBagClient.EXPECT().Send(gomock.Any()).
 				Return(http.Result[bagResult]{StatusCode: gohttp.StatusOK, Data: bag}, nil),
 			mockPlatformClient.EXPECT().Send(gomock.Any()).
-				Return(http.Result[platformVersionLookupResult]{StatusCode: gohttp.StatusOK,
-					Data: platformVersionLookupResult{Results: map[string]platformVersionLookupItem{
-						"547702041": {Offers: []platformVersionLookupOffer{
-							{Version: platformVersionLookupVersion{ExternalID: platformVersionExternalID(latest)}},
-						}},
-					}}}, nil),
+				Return(http.Result[platformVersionLookupResult]{StatusCode: gohttp.StatusOK, Data: catalog}, nil),
 			mockDownloadClient.EXPECT().Send(gomock.Any()).
 				Do(func(req http.Request) {
 					Expect(req.Payload.(*http.XMLPayload).Content).To(HaveKeyWithValue("appExtVrsId", latest))
@@ -327,7 +333,10 @@ var _ = Describe("AppStore (ListVersions)", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(out.ExternalVersionIdentifiers).To(Equal([]string{"9660833", latest}))
 		Expect(out.LatestExternalVersionID).To(Equal(latest))
-	})
+	},
+		Entry("MDM catalog", false),
+		Entry("same-storefront website", true),
+	)
 
 	When("successfully lists versions", func() {
 		const (
