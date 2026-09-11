@@ -16,6 +16,7 @@ type BagOutput struct {
 	// AuthEndpoint is retained for callers that inspect the bag directly.
 	AuthEndpoint       string
 	RedownloadEndpoint string
+	UpdateEndpoint     string
 	SAPConfig          SAPConfig
 }
 
@@ -63,6 +64,7 @@ func (t *appstore) bag(guid string) (BagOutput, error) {
 	return BagOutput{
 		AuthEndpoint:       config.AuthEndpoint,
 		RedownloadEndpoint: res.Data.URLBag.RedownloadEndpoint,
+		UpdateEndpoint:     res.Data.URLBag.UpdateEndpoint,
 		SAPConfig:          config,
 	}, nil
 }
@@ -74,6 +76,7 @@ type bagResult struct {
 type urlBag struct {
 	AuthEndpoint         string `plist:"authenticateAccount,omitempty"`
 	RedownloadEndpoint   string `plist:"redownloadProduct,omitempty"`
+	UpdateEndpoint       string `plist:"updateProduct,omitempty"`
 	SAPSetupEndpoint     string `plist:"sign-sap-setup,omitempty"`
 	SAPSetupCertEndpoint string `plist:"sign-sap-setup-cert,omitempty"`
 	SAPVersion           string `plist:"sign-sap-version,omitempty"`

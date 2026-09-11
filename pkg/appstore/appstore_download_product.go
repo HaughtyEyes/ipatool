@@ -1,6 +1,7 @@
 package appstore
 
 import (
+	"errors"
 	"fmt"
 	gohttp "net/http"
 	"net/url"
@@ -62,10 +63,82 @@ func (t *appstore) sendDownloadProduct(acc Account, app App, guid, externalVersi
 
 	redownloadRes, err := t.downloadClient.Send(t.downloadProductRequest(redownload, acc, app, guid, externalVersionID))
 	if err != nil {
+		if bag.UpdateEndpoint != "" && externalVersionID != "" &&
+			(platform == "" || platform == PlatformIPhone || platform == PlatformIPad) &&
+			isEmptyRedownloadError(err) {
+			updateRes, updateErr := t.sendUpdateProduct(bag.UpdateEndpoint, acc, app, guid, externalVersionID)
+
+			return updateRes, platform, updateErr
+		}
+
 		return redownloadRes, platform, fmt.Errorf("failed to send redownload request: %w", err)
 	}
 
 	return redownloadRes, platform, nil
+}
+
+func isEmptyRedownloadError(err error) bool {
+	var unexpected *http.UnexpectedResponseError
+
+	return errors.As(err, &unexpected) &&
+		unexpected.StatusCode == gohttp.StatusInternalServerError && unexpected.Snippet == ""
+}
+
+func (t *appstore) sendUpdateProduct(endpoint string, acc Account, app App, guid, externalVersionID string) (http.Result[downloadResult], error) {
+	update, err := newUpdateEndpoint(endpoint)
+	if err != nil {
+		return http.Result[downloadResult]{}, err
+	}
+
+	// The bag's updateProduct can serve pinned iOS versions when redownload
+	// returns an empty HTTP 500. Keep the same session and version selection.
+	res, err := t.downloadClient.Send(t.downloadProductRequest(update, acc, app, guid, externalVersionID))
+	if err != nil {
+		return res, fmt.Errorf("failed to send update request: %w", err)
+	}
+
+	if res.Data.FailureType != "" {
+		return res, nil
+	}
+
+	if res.Data.CustomerMessage != "" {
+		return res, fmt.Errorf("received update error: %s", res.Data.CustomerMessage)
+	}
+
+	if res.StatusCode != gohttp.StatusOK {
+		return res, fmt.Errorf("received unexpected update status code: %d", res.StatusCode)
+	}
+
+	if len(res.Data.Items) != 1 {
+		return res, errors.New("update response must contain exactly one item")
+	}
+
+	metadata := res.Data.Items[0].Metadata
+	if fmt.Sprint(metadata["itemId"]) != fmt.Sprint(app.ID) ||
+		fmt.Sprint(metadata["softwareVersionExternalIdentifier"]) != externalVersionID {
+		return res, errors.New("update response does not match the requested app or version")
+	}
+
+	bundleID, ok := metadata["softwareVersionBundleId"].(string)
+	if !ok || bundleID == "" || (app.BundleID != "" && bundleID != app.BundleID) {
+		return res, errors.New("update response does not match the requested bundle identifier")
+	}
+
+	return res, nil
+}
+
+func newUpdateEndpoint(endpoint string) (downloadProductEndpoint, error) {
+	parsed, err := url.ParseRequestURI(endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != PrivateAppStoreRedownloadDomain ||
+		parsed.Path != "/up/updateProduct" || parsed.RawPath != "" || parsed.RawQuery != "" ||
+		parsed.ForceQuery || parsed.Fragment != "" || parsed.User != nil {
+		return downloadProductEndpoint{}, errors.New("invalid update endpoint in bag")
+	}
+
+	return downloadProductEndpoint{
+		baseURL:    endpoint,
+		versionKey: downloadVersionKeyRedownload,
+	}, nil
 }
 
 func isEmptyDownloadProductResponse(res http.Result[downloadResult]) bool {
