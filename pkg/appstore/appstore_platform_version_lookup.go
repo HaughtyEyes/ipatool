@@ -85,26 +85,42 @@ func (t *appstore) lookupLatestExternalVersionID(acc Account, app App, platform 
 	}
 
 	item, ok := res.Data.Results[strconv.FormatInt(app.ID, 10)]
-	if !ok {
-		return "", NewErrorWithMetadata(errors.New("platform version lookup returned no app"), res)
-	}
 
-	if len(item.Offers) == 0 {
-		return "", NewErrorWithMetadata(errors.New("platform version lookup returned no offers"), res)
-	}
+	var catalogErr error
 
-	offer := item.Offers[0]
-	externalVersionID := string(offer.Version.ExternalID)
+	switch {
+	case !ok:
+		catalogErr = errors.New("platform version lookup returned no app")
+	case len(item.Offers) == 0:
+		catalogErr = errors.New("platform version lookup returned no offers")
+	default:
+		offer := item.Offers[0]
+		externalVersionID := string(offer.Version.ExternalID)
 
-	if externalVersionID == "" {
-		externalVersionID, err = externalVersionIDFromBuyParams(offer.BuyParams)
-		if err != nil {
-			return "", fmt.Errorf("failed to parse buy params: %w", err)
+		if externalVersionID == "" {
+			externalVersionID, err = externalVersionIDFromBuyParams(offer.BuyParams)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse buy params: %w", err)
+			}
 		}
+
+		if externalVersionID != "" {
+			return externalVersionID, nil
+		}
+
+		catalogErr = errors.New("platform version lookup returned no external version id")
 	}
 
-	if externalVersionID == "" {
-		return "", NewErrorWithMetadata(errors.New("platform version lookup returned no external version id"), res)
+	catalogErr = NewErrorWithMetadata(catalogErr, res)
+	if platform != PlatformIPhone && platform != PlatformIPad {
+		return "", catalogErr
+	}
+
+	// Apple's MDM catalog can omit an app that its same-storefront website
+	// still offers. Keep the version pin, but obtain it from the website API.
+	externalVersionID, err := t.lookupWebsiteExternalVersionID(app, countryCode)
+	if err != nil {
+		return "", fmt.Errorf("%w; website fallback failed: %w", catalogErr, err)
 	}
 
 	return externalVersionID, nil

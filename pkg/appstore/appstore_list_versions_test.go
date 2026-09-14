@@ -328,7 +328,7 @@ var _ = Describe("AppStore (ListVersions)", func() {
 		})
 	})
 
-	It("lists the iOS history from a version-pinned fallback", func() {
+	DescribeTable("lists the iOS history from a version-pinned fallback", func(useWebsite bool) {
 		const latest = "890598805"
 		bag := validBagResult()
 		bag.URLBag.RedownloadEndpoint = testRedownloadEndpoint
@@ -337,6 +337,11 @@ var _ = Describe("AppStore (ListVersions)", func() {
 				{Version: platformVersionLookupVersion{ExternalID: platformVersionExternalID(latest)}},
 			}},
 		}}
+		if useWebsite {
+			catalog = platformVersionLookupResult{}
+			as.(*appstore).websiteClient = testWebsiteVersionClient(
+				websiteVersionBody("547702041", "com.cardify.tinder", latest), gohttp.StatusOK)
+		}
 
 		mockMachine.EXPECT().MacAddress().Return("00:11:22:33:44:55", nil)
 		gomock.InOrder(
@@ -364,7 +369,10 @@ var _ = Describe("AppStore (ListVersions)", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(out.ExternalVersionIdentifiers).To(Equal([]string{"9660833", latest}))
 		Expect(out.LatestExternalVersionID).To(Equal(latest))
-	})
+	},
+		Entry("MDM catalog", false),
+		Entry("same-storefront website", true),
+	)
 
 	When("successfully lists versions", func() {
 		const (

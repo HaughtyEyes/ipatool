@@ -1,6 +1,7 @@
 package appstore
 
 import (
+	gohttp "net/http"
 	"time"
 
 	"github.com/majd/ipatool/v2/pkg/http"
@@ -44,6 +45,7 @@ type appstore struct {
 	purchaseClient      http.Client[purchaseResult]
 	downloadClient      http.Client[downloadResult]
 	platformClient      http.Client[platformVersionLookupResult]
+	websiteClient       *gohttp.Client
 	storefrontClient    http.Client[[]byte]
 	bagClient           http.Client[bagResult]
 	ownedAppsClient     http.Client[[]byte]
@@ -80,6 +82,7 @@ func NewAppStore(args Args) AppStore {
 		purchaseClient:      http.NewClient[purchaseResult](clientArgs),
 		downloadClient:      http.NewClient[downloadResult](clientArgs),
 		platformClient:      http.NewClient[platformVersionLookupResult](clientArgs),
+		websiteClient:       newWebsiteVersionClient(),
 		storefrontClient:    http.NewClient[[]byte](clientArgs),
 		bagClient:           http.NewClient[bagResult](clientArgs),
 		ownedAppsClient:     http.NewClient[[]byte](clientArgs),

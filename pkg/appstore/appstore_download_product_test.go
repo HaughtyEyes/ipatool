@@ -353,14 +353,17 @@ var _ = Describe("AppStore (Download Product)", func() {
 		})
 
 		It("does not send an unpinned request when the app is absent from the catalog", func() {
+			store.websiteClient = testWebsiteVersionClient(`{"data":[]}`, gohttp.StatusOK)
 			mockPlatformClient.EXPECT().Send(gomock.Any()).
 				Return(http.Result[platformVersionLookupResult]{StatusCode: gohttp.StatusOK}, nil)
 
 			_, _, err := store.sendDownloadProduct(account, app, testGUID, "", PlatformIPhone)
 			Expect(err).To(MatchError(ContainSubstring("platform version lookup returned no app")))
+			Expect(err).To(MatchError(ContainSubstring("website version lookup returned no matching app")))
 		})
 
 		It("does not send an unpinned request when the catalog version is missing", func() {
+			store.websiteClient = testWebsiteVersionClient("API capacity exceeded", gohttp.StatusServiceUnavailable)
 			latestVersion.Results[strconv.FormatInt(app.ID, 10)] = platformVersionLookupItem{
 				Offers: []platformVersionLookupOffer{{}},
 			}
@@ -369,6 +372,27 @@ var _ = Describe("AppStore (Download Product)", func() {
 
 			_, _, err := store.sendDownloadProduct(account, app, testGUID, "", PlatformIPhone)
 			Expect(err).To(MatchError(ContainSubstring("platform version lookup returned no external version id")))
+			Expect(err).To(MatchError(ContainSubstring("HTTP 503")))
+		})
+
+		It("pins the website version before redownload when MDM omits the app", func() {
+			store.websiteClient = testWebsiteVersionClient(
+				websiteVersionBody(strconv.FormatInt(app.ID, 10), "com.example.app", testVersionID), gohttp.StatusOK)
+			gomock.InOrder(
+				mockPlatformClient.EXPECT().Send(gomock.Any()).
+					Return(http.Result[platformVersionLookupResult]{StatusCode: gohttp.StatusOK}, nil),
+				mockDownloadClient.EXPECT().Send(gomock.Any()).
+					Do(func(req http.Request) {
+						Expect(req.Payload.(*http.XMLPayload).Content).To(HaveKeyWithValue("appExtVrsId", testVersionID))
+					}).
+					Return(http.Result[downloadResult]{StatusCode: gohttp.StatusOK,
+						Data: downloadResult{Items: []downloadItemResult{{URL: "https://example.com/ios.ipa"}}}}, nil),
+			)
+
+			res, resolvedPlatform, err := store.sendDownloadProduct(account, app, testGUID, "", "")
+			Expect(err).ToNot(HaveOccurred())
+			Expect(res.Data.Items).To(HaveLen(1))
+			Expect(resolvedPlatform).To(Equal(PlatformIPhone))
 		})
 
 		It("does not retry a plist error response", func() {
