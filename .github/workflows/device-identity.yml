@@ -1,0 +1,50 @@
+name: Device Identity
+
+on:
+  push:
+    branches: [device-identity]
+  pull_request:
+    branches: [device-identity]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Generate and test
+        run: |
+          go generate ./...
+          test -z "$(gofmt -l cmd/common.go cmd/root.go cmd/device_identity_test.go pkg/util/machine/machine.go pkg/util/machine/device_identity_test.go)"
+          go test -timeout 20m ./...
+      - name: Build and verify CLI
+        run: |
+          base=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+          version="${base#v}-device-identity-${GITHUB_SHA:0:7}"
+          mkdir -p dist
+          go build -ldflags="-X github.com/majd/ipatool/v2/cmd.version=${version}" -o dist/ipatool .
+          test "$(dist/ipatool --version)" = "ipatool version ${version}"
+          dist/ipatool --help | grep -- --device-mac-address
+          dist/ipatool auth login --help
+          dist/ipatool auth info --help
+          dist/ipatool purchase --help
+          dist/ipatool download --help
+          tar -C dist -czf "dist/ipatool-${version}-linux-amd64.tar.gz" ipatool
+          sha256sum "dist/ipatool-${version}-linux-amd64.tar.gz" > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipatool-device-identity-linux-amd64
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
