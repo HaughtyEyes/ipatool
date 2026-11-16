@@ -44,6 +44,7 @@ func rootCmd() *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enables verbose logs")
 	cmd.PersistentFlags().BoolVarP(&nonInteractive, "non-interactive", "", false, "run in non-interactive session")
 	cmd.PersistentFlags().StringVar(&keychainPassphrase, "keychain-passphrase", "", "passphrase for unlocking keychain")
+	cmd.PersistentFlags().String("device-mac-address", "", "stable device MAC address (defaults to IPATOOL_DEVICE_MAC_ADDRESS or automatic detection)")
 
 	cmd.AddCommand(authCmd())
 	cmd.AddCommand(downloadCmd())

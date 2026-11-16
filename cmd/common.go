@@ -106,7 +106,12 @@ func initWithCommand(cmd *cobra.Command) {
 	}
 
 	dependencies.OS = operatingsystem.New()
-	dependencies.Machine = machine.New(machine.Args{OS: dependencies.OS})
+	deviceMACAddress := cmd.Flag("device-mac-address").Value.String()
+	if !cmd.Flag("device-mac-address").Changed && deviceMACAddress == "" {
+		deviceMACAddress = dependencies.OS.Getenv("IPATOOL_DEVICE_MAC_ADDRESS")
+	}
+
+	dependencies.Machine = machine.New(machine.Args{OS: dependencies.OS, DeviceMACAddress: deviceMACAddress})
 	stateDirectory := util.Must(prepareStateDirectory(dependencies.OS, dependencies.Machine.HomeDirectory()))
 	dependencies.CookieJar = newCookieJar(stateDirectory)
 	dependencies.Keychain = newKeychain(stateDirectory, interactive)

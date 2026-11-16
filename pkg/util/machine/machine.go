@@ -1,10 +1,12 @@
 package machine
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/majd/ipatool/v2/pkg/util/operatingsystem"
@@ -24,16 +26,19 @@ type machine struct {
 	macAddressOnce sync.Once
 	macAddress     string
 	macAddressErr  error
+	configuredMAC  string
 }
 
 type Args struct {
-	OS operatingsystem.OperatingSystem
+	OS               operatingsystem.OperatingSystem
+	DeviceMACAddress string
 }
 
 func New(args Args) Machine {
 	return &machine{
-		os:         args.OS,
-		interfaces: net.Interfaces,
+		os:            args.OS,
+		interfaces:    net.Interfaces,
+		configuredMAC: args.DeviceMACAddress,
 	}
 }
 
@@ -41,6 +46,19 @@ func New(args Args) Machine {
 // identity even if an adapter is added or removed during this invocation.
 func (m *machine) MacAddress() (string, error) {
 	m.macAddressOnce.Do(func() {
+		if m.configuredMAC != "" {
+			address, err := net.ParseMAC(strings.TrimSpace(m.configuredMAC))
+			if err != nil || !usableMacAddress(address) {
+				m.macAddressErr = errors.New("configured device MAC address must be a usable six-byte unicast address")
+
+				return
+			}
+
+			m.macAddress = address.String()
+
+			return
+		}
+
 		interfaces, err := m.interfaces()
 		if err != nil {
 			m.macAddressErr = fmt.Errorf("failed to get network interfaces: %w", err)
